@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>AR Backend Tester</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    #results p { margin: 5px 0; }
+    .priority { color: red; font-weight: bold; }
+  </style>
+</head>
+<body>
+<h2>AR Backend Tester</h2>
+
+<div>
+  <b>Mode:</b>
+  <select id="mode">
+    <option>hospital</option>
+    <option>railway</option>
+    <option>none</option>
+  </select><br/><br/>
+
+  <b>Keywords (comma separated):</b>
+  <input id="kw" value="token 42, sharma, announcement" size="40"/><br/><br/>
+
+  <b>Force Direction (For Testing):</b>
+  <select id="direction">
+    <option value="front">Front</option>
+    <option value="left">Left</option>
+    <option value="right">Right</option>
+    <option value="back">Back</option>
+  </select><br/><br/>
+
+  <button onclick="setConfig()">Set Config</button>
+  <span id="cfg-status" style="margin-left:10px;"></span>
+</div>
+<hr/>
+
+<div>
+  <button id="rec-btn" onclick="toggleRecord()">Start Recording</button>
+  <span id="rec-status" style="margin-left:10px;"></span>
+</div>
+
+<div id="results" style="margin-top:20px; font-family:monospace;"></div>
+
+<script>
+const SERVER = "http://localhost:5000";
+let mediaRecorder, audioChunks = [], recording = false;
+
+async function setConfig() {
+  const mode = document.getElementById("mode").value;
+  const kws = document.getElementById("kw").value.split(",").map(s => s.trim());
+  const direction = document.getElementById("direction").value; // NEW: Grab the direction
+
+  try {
+    const r = await fetch(SERVER + "/set_config", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      // NEW: Added direction to the JSON body
+      body: JSON.stringify({mode, keywords: kws, direction}) 
+    });
+    const d = await r.json();
+    document.getElementById("cfg-status").textContent = " Saved: " + JSON.stringify(d);
+  } catch(e) {
+    document.getElementById("cfg-status").textContent = " Error connecting to server";
+    console.error(e);
+  }
+}
+
+async function toggleRecord() {
+  if (!recording) {
+    audioChunks = [];
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // ✅ Supported MIME type
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    mediaRecorder.onstop = sendAudio;
+    mediaRecorder.start();
+    recording = true;
+    document.getElementById("rec-btn").textContent = "Stop Recording";
+    document.getElementById("rec-status").textContent = " Recording...";
+  } else {
+    mediaRecorder.stop();
+    recording = false;
+    document.getElementById("rec-btn").textContent = "Start Recording";
+    document.getElementById("rec-status").textContent = " Processing...";
+  }
+}
+
+async function sendAudio() {
+  const blob = new Blob(audioChunks, { type: "audio/webm" });
+  try {
+    const r = await fetch(SERVER + "/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": "audio/webm" },
+      body: blob
+    });
+    const d = await r.json();
+    const div = document.getElementById("results");
+    const colorClass = d.is_priority ? "priority" : "";
+    
+    // NEW: Added the Direction to the results readout
+    div.innerHTML = "<p class='" + colorClass + "'>" +
+      "<b>Text:</b> " + d.text + "<br/>" +
+      "<b>Priority:</b> " + d.is_priority + "<br/>" +
+      "<b>Keyword matched:</b> " + (d.matched_keyword || "None") + "<br/>" +
+      "<b>Direction:</b> " + (d.source_direction || "front") + 
+      "</p>" + div.innerHTML;
+      
+    document.getElementById("rec-status").textContent = "";
+  } catch(e) {
+    document.getElementById("rec-status").textContent = " Error connecting to server";
+    console.error(e);
+  }
+}
+</script>
+</body>
+</html>
